@@ -31,6 +31,7 @@
 #include <sys/ipc.h>
 #include <sys/shm.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 void help();
 char calling_name[200];
@@ -80,6 +81,15 @@ int main(int argc, char *argv[])
         }
     }
 
+    //These are used to exec the new process
+    //and are set up for only testing right now.
+    int int_logical_id = 1;
+    char start_prime_str[20];
+    char logical_id[20];
+    char size_shm[20];
+    sprintf(start_prime_str, "%d", start_of_prime_sequence);
+    sprintf(logical_id, "%d", int_logical_id);
+    sprintf(size_shm, "%d", (2+child_proc_alltime_max));
 
     /* Test print for option detection
     printf("total child proc: %d\n", child_proc_alltime_max);
@@ -120,9 +130,27 @@ int main(int argc, char *argv[])
     *shm_ptr = 10;
     *(shm_ptr+1) = 20;
 
+
+    //Fork and exec prime
+    int pid;
+    if ((pid = fork()) < 0) {
+        fprintf(stderr, "%s: Error: fork() failed to launch child.\n%s\n", calling_name, strerror(errno));
+        exit(-1);
+    }
+    else if (pid == 0) {
+        char *exec_args[] = {"./prime", logical_id, start_prime_str, size_shm, NULL};
+        if (execv(exec_args[0], exec_args) == -1) {
+            fprintf(stderr, "%s: Error: execv() failed to execute new process.\n%s\n", calling_name, strerror(errno));
+            exit(-1);
+        }
+    }
+
+    printf("%s: Waiting on child...\n", calling_name);
+    wait(NULL);
+
     //Print their values to confirm.
-    printf("Seconds are: %d\n", *shm_ptr);
-    printf("Milli are: %d\n", *(shm_ptr+1));
+    printf("%s: Seconds are: %d\n", calling_name, *shm_ptr);
+    printf("%s: Milli are: %d\n", calling_name, *(shm_ptr+1));
 
 
     //Detach and remove shared memory segment.

@@ -1,7 +1,86 @@
-#include <stdio.h>
+//*******************************************************************
+//Author: Cory Mckiel
+//Date Created: Feb 20, 2020
+//Last Modified: Feb 21, 2020
+//Program Name: prime
+//Associated Files: prime.c oss.c
+//Compiler: gcc
+//Options:  The following numbers are REQUIRED for proper operation.
+//          logical_id      (The assignment number for the child.)
+//          number          (number to be tested for primality.)
+//          shm_size        (The size of the shm seg this child
+//                              will attach to.)
+//Usage:    ./prime logical_id number shm_size (Exact order matters)
+//
+//Program Description: prime is designed to be a child process to 
+//oss. It's main function is test a number to see if it is prime.
+//To communicate with oss it attaches to shared memory created
+//by oss.
+//*******************************************************************
 
-int main()
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#include <sys/types.h>
+#include <unistd.h>
+
+char calling_name[200];
+
+int main(int argc, char *argv[])
 {
-  printf("Hello from prime!\n");
-  return 0;
+    //Store the executable name in a global
+    //variable to use for error reporting.
+    strncpy(calling_name, argv[0], 200);
+
+    //Check to make the the correct number
+    //of arguments is satisfied.
+    if (argc != 4) {
+        fprintf(stderr, "%s: Usage: ./%s logical_child_id_int potential_prime_int sizeof_shm\n", calling_name, calling_name);
+        exit(-1);
+    }
+    
+    //Made it this far? Store the numbers.
+    int logical_child_id = atoi(argv[1]);
+    int potential_prime = atoi(argv[2]);
+    int size_of_shm = atoi(argv[3]);
+
+    //Print them to stdout to confirm reciept.
+    printf("%s: logical ID: %d\n", calling_name, logical_child_id);
+    printf("%s: potential prime: %d\n", calling_name, potential_prime);
+    printf("%s: size of shm: %d\n", calling_name, size_of_shm);
+
+    //Declare the shared mem variables.
+    key_t key;
+    int shm_id;
+    int *shm_ptr;
+
+    //Generate the same key as oss/master. (Hardcoded)
+    if ((key = ftok("./", 432)) == -1) {
+        fprintf(stderr, "%s: Error: ftok() failed to generate key.\n%s\n", calling_name, strerror(errno));
+        exit(-1);
+    }
+    //Get the shared memory created by oss/master using same key.
+    if ((shm_id = shmget(key, size_of_shm*sizeof(int), 0666)) < 0) {
+        fprintf(stderr, "%s: Error: Failed to get shared memory.\n%s\n", calling_name, strerror(errno));
+        exit(-1);
+    }
+    //Attach to the shm.
+    if ((shm_ptr = (int*)shmat(shm_id, NULL, 0)) < 0) {
+        fprintf(stderr, "%s: Error: Failed to attach to shared memory.\n%s\n", calling_name, strerror(errno));
+        exit(-1);
+    }
+
+    //Print out the shared memory.
+    printf("%s: Seconds: %d\n", calling_name, *shm_ptr);
+    printf("%s: Milliseconds: %d\n", calling_name, *(shm_ptr+1));
+
+
+    //Detach and remove shm
+    shmdt(shm_ptr);
+    shmctl(shm_id, IPC_RMID, NULL);
+      
+    return 0;
 }
