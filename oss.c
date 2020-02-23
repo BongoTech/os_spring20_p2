@@ -99,12 +99,33 @@ int main(int argc, char *argv[])
     }
     
     //Initialize these to acceptable default values.
+    //The values can be replaced by cmd ln args.
     int child_proc_alltime_max = 4;
     int child_proc_realtime_max = 2;
     int start_of_prime_sequence = 43;
     int increment_sequence_by = 1;
     char output_file_name[200];
     int use_output_file = 0;
+
+    //Set up for keeping track of children and
+    //associated pids.
+    //
+    //Assign to each child a logical id used
+    //to access it's space on the shared
+    //memory array.
+    int logical_id = 0;
+    //The current total of lauched children.
+    int child_proc_alltime_current = 0;
+    //The current number of children in the
+    //system right now.
+    int child_proc_realtime_current = 0;
+    //A pid for each child to help with termination.
+    int pids[child_proc_alltime_max];
+    //Initialize the pid's.
+    int i;
+    for (i = 0; i < child_proc_alltime_max; i++) {
+        pids[i] = -1;
+    }
  
     //Get all the command line arguments.  
     int option_index = 0;
@@ -140,24 +161,10 @@ int main(int argc, char *argv[])
 
     //These are used to exec the new process
     //and are set up for only testing right now.
-    int int_logical_id = 1;
-    char start_prime_str[20];
-    char logical_id[20];
-    char size_shm[20];
-    sprintf(start_prime_str, "%d", start_of_prime_sequence);
-    sprintf(logical_id, "%d", int_logical_id);
-    sprintf(size_shm, "%d", (2+child_proc_alltime_max));
-
-    /* Test print for option detection
-    printf("total child proc: %d\n", child_proc_alltime_max);
-    printf("sys child proc: %d\n", child_proc_realtime_max);
-    printf("start prime: %d\n", start_of_prime_sequence);
-    printf("increment by: %d\n", increment_sequence_by);
-    if (use_output_file) {
-        printf("out file: %s\n", output_file_name);
-    }
-    */
-
+    char start_prime_buf[20];
+    char logical_id_buf[20];
+    char size_shm_buf[20];
+   
     //Shared memory variables.
     key_t key;
     int shm_id;
@@ -183,35 +190,141 @@ int main(int argc, char *argv[])
         exit(-1);
     }
 
-    //Assign seconds and milliseconds as a test.
-    *shm_ptr = 10;
-    *(shm_ptr+1) = 20;
-
-
-    //Fork and exec prime
-    int pid;
-    if ((pid = fork()) < 0) {
-        fprintf(stderr, "%s: Error: fork() failed to launch child.\n%s\n", calling_name, strerror(errno));
-        exit(-1);
+    //Shared memory is not set up.
+    //Initialize to zero.
+    for (i = 0; i < (2+child_proc_alltime_max); i++) {
+        *(shm_ptr+i) = 0;
     }
-    else if (pid == 0) {
-        char *exec_args[] = {"./prime", logical_id, start_prime_str, size_shm, NULL};
-        if (execv(exec_args[0], exec_args) == -1) {
-            fprintf(stderr, "%s: Error: execv() failed to execute new process.\n%s\n", calling_name, strerror(errno));
-            exit(-1);
+
+    //Create an array to keep track of which children
+    //have already completed. This array is the same
+    //size as the array in shared memory used for 
+    //returning calculation results. The index
+    //is the same as the child's logical id. If no results
+    //have been returned for a child,
+    //already_finished_children[child_id] = 0;
+    //else set to one to indicate that the child
+    //has finished.
+    int already_finished_children[child_proc_alltime_max];
+    for (i = 0; i < child_proc_alltime_max; i++) {
+        already_finished_children[i] = 0;
+    }
+
+    //This flag will be set to 1 when all children
+    //have finished their calculations.
+    int all_children_finished = 0;
+
+    //Flag for not creating more chidren.
+    int no_more_children = 0;
+
+    //This is the main loop for the program's
+    //functionality.
+    while (!all_children_finished) {
+
+        //This for loop launches a number of children up to
+        //the system's max specified by -s which can at most be 20.
+        //as it creates children and children finish, child_proc_realtime_current
+        //can be incremented or decremented to determine how many times
+        //this loop runs.
+        for (i = child_proc_realtime_current; i < child_proc_realtime_max; i++) {
+            if (no_more_children) {
+                //Don't create more children.
+                break;
+            }
+
+            //Load the variables for execv into string form.    
+            sprintf(start_prime_buf, "%d", start_of_prime_sequence);
+            sprintf(logical_id_buf, "%d", logical_id);
+            sprintf(size_shm_buf, "%d", (2+child_proc_alltime_max));
+
+            //Fork and exec prime
+            //Keep track of the pid in pids[].
+            if ((pids[child_proc_alltime_current] = fork()) < 0) {
+                fprintf(stderr, "%s: Error: fork() failed to launch child.\n%s\n", calling_name, strerror(errno));
+                exit(-1);
+            }
+            else if (pids[child_proc_alltime_current] == 0) {
+                //exec prime.
+                char *exec_args[] = {"./prime", logical_id_buf, start_prime_buf, size_shm_buf, NULL};
+                if (execv(exec_args[0], exec_args) == -1) {
+                    fprintf(stderr, "%s: Error: execv() failed to execute new process.\n%s\n", calling_name, strerror(errno));
+                    exit(-1);
+                }
+            }
+            //Increment these variables to keep track
+            //of how many children are in the system now,
+            //how many total have been created, their logical
+            //id's and the next prime to feed the next child.
+            child_proc_realtime_current += 1;
+            child_proc_alltime_current += 1;
+            logical_id += 1;
+            start_of_prime_sequence += increment_sequence_by;
+        }
+
+        //Increase the simulated clock.
+        if ((*(shm_ptr+1) += 10000) == 1000000000) {
+            *shm_ptr += 1;
+            *(shm_ptr+1) = 0;
+        }
+
+        //Always check for the signal to terminate.
+        if (done_flag) {
+            break;
+        }
+
+        //Mechanism for detecting child finishing
+        //and decreasing child_proc_realtime_current
+        //so that new children can be created. Loop
+        //through the shared memory. Add 2 to 
+        //shm_ptr to ignore seconds and milliseconds.
+        int k;
+        for (k = 0; k < child_proc_alltime_max; k++) {
+            //If the slot for the child's return value
+            //in shared memory is non zero(it finished)
+            //and if the child has never been observed
+            //to have finished already.
+            if (*(shm_ptr+(k+2)) != 0 && already_finished_children[k] == 0) {
+                //Note it as finished.
+                already_finished_children[k] = 1;
+                //Create room for another child to exist.
+                child_proc_realtime_current -= 1;
+            }
+        }
+
+        //Mechanism for stopping the main while loop.
+        //Loop through the entire array of finished 
+        //children. If any have not finished yet,
+        //break. If all have been observed as finished,
+        //set the all_children_finished flag to end the
+        //loop.
+        for (k = 0; k < child_proc_alltime_max; k++) {
+            if (already_finished_children[k] == 0) {
+                break;
+            }
+            
+            if (k == (child_proc_alltime_max-1)) {
+                printf("All children finished\n");
+                all_children_finished = 1;
+            }
+        }
+        
+        //If we have created the max amount of children,
+        //set the no child flag.
+        if (child_proc_alltime_current == child_proc_alltime_max - 0) {
+            no_more_children = 1;
+        }
+    }           
+
+    //Start to terminate children.
+    int j;
+    for (j = 0; j < child_proc_alltime_max; j++) {
+        if (pids[j] > 0) {
+            kill(pids[j], SIGUSR1);
         }
     }
-
-    //Go into an infinite loop to test timer interrupt.
-    while (!done_flag);
-
-    //If past the loop, tell the child to terminate using
-    //SIGUSR1
-    kill(pid, SIGUSR1);
    
-    //Wait on the child. 
-    //printf("%s: Waiting on child...\n", calling_name);
-    wait(NULL);
+    //Wait on the children. 
+    while(wait(NULL) > 0);
 
     //Print their values to confirm.
     printf("%s: Seconds are: %d\n", calling_name, *shm_ptr);
@@ -221,7 +334,6 @@ int main(int argc, char *argv[])
     //Detach and remove shared memory segment.
     shmdt(shm_ptr);
     shmctl(shm_id, IPC_RMID, 0);
-    
 
     return 0;
 }

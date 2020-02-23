@@ -85,7 +85,7 @@ int main(int argc, char *argv[])
     int size_of_shm = atoi(argv[3]);
 
     //Print them to stdout to confirm reciept.
-    printf("%s: logical ID: %d\n", calling_name, logical_child_id);
+    fprintf(stderr, "%s: logical ID: %d\n", calling_name, logical_child_id);
     //printf("%s: potential prime: %d\n", calling_name, potential_prime);
     //printf("%s: size of shm: %d\n", calling_name, size_of_shm);
 
@@ -112,14 +112,24 @@ int main(int argc, char *argv[])
 
     //Print out the shared memory.
     //printf("%s: Seconds: %d\n", calling_name, *shm_ptr);
-    //printf("%s: Milliseconds: %d\n", calling_name, *(shm_ptr+1));
+    //printf("%s: %d: Milliseconds: %d\n", calling_name, logical_child_id, *(shm_ptr+1));
 
-    printf("%s: Starting loop.\n", calling_name);
-    while(!kill_flag);
+    //Do some fake work.
+    int i = 0;
+    while(i < 1000) {
+        i += 1;
+    }
+    
+    //Store the potential_prime in shared memory
+    //for testing purposes to let oss/master
+    //know the process finished.
+    *(shm_ptr+(2+logical_child_id)) = potential_prime;   
    
     //Detach and remove shm
     shmdt(shm_ptr);
-    shmctl(shm_id, IPC_RMID, NULL);
+    //Not sure if the child should remove the shared memory
+    //or let the parent do it.
+    //shmctl(shm_id, IPC_RMID, NULL);
       
     return 0;
 }
