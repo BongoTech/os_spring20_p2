@@ -1,7 +1,7 @@
 //*******************************************************************
 //Author: Cory Mckiel
 //Date Created: Feb 20, 2020
-//Last Modified: Feb 21, 2020
+//Last Modified: Feb 23, 2020
 //Program Name: prime
 //Associated Files: prime.c oss.c
 //Compiler: gcc
@@ -19,6 +19,7 @@
 //*******************************************************************
 
 #include <errno.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,7 +28,35 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+//Declare this as volatile so the compiler
+//knows that it can be asynchronously changed.
+//Declare as atomic so that nothing tries
+//to change at the same time.
+static volatile sig_atomic_t kill_flag = 0;
+
+//Store the name the program was called with.
 char calling_name[200];
+
+//Kill signal handler. Sets kill signal.
+//kill_flag will be checked during
+//program running to see if we should
+//terminate gracefully.
+static void handler(int sig)
+{
+    kill_flag = 1;   
+}
+
+//Set up the interrupt to catch SIGUSR1
+//which doesn't have any default action.
+//Allows me to end the program on my terms.
+//Returns -1 on error.
+static int setupinterrupt()
+{
+    struct sigaction act;
+    act.sa_handler = handler;
+    act.sa_flags = 0;
+    return (sigemptyset(&act.sa_mask) || sigaction(SIGUSR1, &act, NULL));
+}
 
 int main(int argc, char *argv[])
 {
@@ -35,6 +64,14 @@ int main(int argc, char *argv[])
     //variable to use for error reporting.
     strncpy(calling_name, argv[0], 200);
 
+    //Set up the interrupt so the parent
+    //can kill this process gracefully upon
+    //termination.
+    if (setupinterrupt() == -1) {
+        fprintf(stderr, "%s: Error: Failed to set up interrupt.\n%s\n", calling_name, strerror(errno));
+        exit(-1);
+    }
+    
     //Check to make the the correct number
     //of arguments is satisfied.
     if (argc != 4) {
@@ -49,8 +86,8 @@ int main(int argc, char *argv[])
 
     //Print them to stdout to confirm reciept.
     printf("%s: logical ID: %d\n", calling_name, logical_child_id);
-    printf("%s: potential prime: %d\n", calling_name, potential_prime);
-    printf("%s: size of shm: %d\n", calling_name, size_of_shm);
+    //printf("%s: potential prime: %d\n", calling_name, potential_prime);
+    //printf("%s: size of shm: %d\n", calling_name, size_of_shm);
 
     //Declare the shared mem variables.
     key_t key;
@@ -74,10 +111,12 @@ int main(int argc, char *argv[])
     }
 
     //Print out the shared memory.
-    printf("%s: Seconds: %d\n", calling_name, *shm_ptr);
-    printf("%s: Milliseconds: %d\n", calling_name, *(shm_ptr+1));
+    //printf("%s: Seconds: %d\n", calling_name, *shm_ptr);
+    //printf("%s: Milliseconds: %d\n", calling_name, *(shm_ptr+1));
 
-
+    printf("%s: Starting loop.\n", calling_name);
+    while(!kill_flag);
+   
     //Detach and remove shm
     shmdt(shm_ptr);
     shmctl(shm_id, IPC_RMID, NULL);
