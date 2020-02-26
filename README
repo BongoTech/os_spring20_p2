@@ -1,0 +1,43 @@
+PRIME CALCULATOR: oss
+
+DESCRIPTION:
+    oss calculates if a number is prime or not by being a
+        controller process that launches another program named
+        prime. oss launches a number of prime children for
+        a sequence of prime numbers.
+
+FILES:  oss.c prime.c
+
+TO COMPILE:
+	OPTION ONE: Use the supplied makefile. Simply type make.
+	OPTION TWO: Compile the two c files.
+        gcc -g -Wall -o oss oss.c
+        gcc -g -Wall -o prime prime.c
+
+TO RUN:
+	./oss [-h] [OPTIONs]
+
+	Where [-h] displays a help message and exits program.
+	[OPTIONs] are as follows:
+    
+     -h      (Displays a usage message)
+     -n x    (Indicate the maximum total of child processes,
+                    x, oss will ever create. Default 4)
+     -s x    (Indicate the number of children, x, allowed to
+                    exist in the system at the same time. Default 2)
+     -b B    (Start of the sequence of numbers to be tested
+                    for primality. Default 43)
+     -i I    (Increment between numbers that we test. Default 1)
+     -o filename     (Output file. Default is no output file.)
+
+
+VERSION CONTROL:
+	git is the version control for this project. Before submission
+	I will export everthing from git log into a file named git_log.txt. This 
+	will contain all revisions and associated notes.
+
+NOTES:
+  * I believe that increasing the simulated clock by 10,000 is too fast
+        for the program to be effective because it severely limits
+        the size of prime number prime is given time to calculate.
+  * I experience weird behavior from prime with numbers larger than 6 digits.
