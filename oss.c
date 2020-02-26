@@ -1,7 +1,7 @@
 //*******************************************************************
 //Author: Cory Mckiel
 //Date Created: Feb 20, 2020
-//Last Modified: Feb 23, 2020
+//Last Modified: Feb 26, 2020
 //Program Name: oss
 //Associated Files: oss.c prime.c
 //Compiler: gcc
@@ -33,6 +33,7 @@
 #include <sys/shm.h>
 #include <sys/time.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 //Prints the help message.
@@ -105,7 +106,7 @@ int main(int argc, char *argv[])
     int start_of_prime_sequence = 43;
     int increment_sequence_by = 1;
     char output_file_name[200];
-    int use_output_file = 0;
+    strncpy(output_file_name, "output.txt", 200);
 
     //Set up for keeping track of children and
     //associated pids.
@@ -120,11 +121,11 @@ int main(int argc, char *argv[])
     //system right now.
     int child_proc_realtime_current = 0;
     //A pid for each child to help with termination.
-    int pids[child_proc_alltime_max];
+    pid_t pids[child_proc_alltime_max];
     //Initialize the pid's.
     int i;
     for (i = 0; i < child_proc_alltime_max; i++) {
-        pids[i] = -1;
+        pids[i] = 0 ;
     }
  
     //Get all the command line arguments.  
@@ -150,7 +151,6 @@ int main(int argc, char *argv[])
                 increment_sequence_by = atoi(optarg);
                 break;
             case 'o':
-                use_output_file = 1;
                 strncpy(output_file_name, optarg, 200);
                 break;
             default:
@@ -179,7 +179,7 @@ int main(int argc, char *argv[])
     //Create the shared memory segment to include the 2 integers
     //seconds and milliseconds, as well as an integer for each child
     //process in alltime_max.
-    if ((shm_id = shmget(key, (2+child_proc_alltime_max)*sizeof(int), IPC_CREAT|0666)) < 0) {
+    if ((shm_id = shmget(key, (3+child_proc_alltime_max)*sizeof(int), IPC_CREAT|0666)) < 0) {
         fprintf(stderr, "%s: Error: Failed to allocate shared memory.\n%s\n", calling_name, strerror(errno));
         exit(-1);
     }
@@ -190,11 +190,11 @@ int main(int argc, char *argv[])
         exit(-1);
     }
 
-    //Shared memory is not set up.
+    //Shared memory is now set up.
     //Initialize to zero.
-    for (i = 0; i < (2+child_proc_alltime_max); i++) {
+    for (i = 0; i < (3+child_proc_alltime_max); i++) {
         *(shm_ptr+i) = 0;
-    }
+    } 
 
     //Create an array to keep track of which children
     //have already completed. This array is the same
@@ -209,6 +209,9 @@ int main(int argc, char *argv[])
     for (i = 0; i < child_proc_alltime_max; i++) {
         already_finished_children[i] = 0;
     }
+
+    //Create the ouput file.
+    FILE *fp = fopen(output_file_name, "w");
 
     //This flag will be set to 1 when all children
     //have finished their calculations.
@@ -235,7 +238,7 @@ int main(int argc, char *argv[])
             //Load the variables for execv into string form.    
             sprintf(start_prime_buf, "%d", start_of_prime_sequence);
             sprintf(logical_id_buf, "%d", logical_id);
-            sprintf(size_shm_buf, "%d", (2+child_proc_alltime_max));
+            sprintf(size_shm_buf, "%d", (3+child_proc_alltime_max));
 
             //Fork and exec prime
             //Keep track of the pid in pids[].
@@ -251,6 +254,7 @@ int main(int argc, char *argv[])
                     exit(-1);
                 }
             }
+            fprintf(fp, "Launching Child %d @ time: s: %d ns: %d\n", child_proc_alltime_current, *(shm_ptr+1), *(shm_ptr+2));
             //Increment these variables to keep track
             //of how many children are in the system now,
             //how many total have been created, their logical
@@ -262,9 +266,9 @@ int main(int argc, char *argv[])
         }
 
         //Increase the simulated clock.
-        if ((*(shm_ptr+1) += 10000) == 1000000000) {
-            *shm_ptr += 1;
-            *(shm_ptr+1) = 0;
+        if ((*(shm_ptr+2) += 10000) == 1000000000) {
+            *(shm_ptr+1) += 1;
+            *(shm_ptr+2) = 0;
         }
 
         //Always check for the signal to terminate.
@@ -283,7 +287,8 @@ int main(int argc, char *argv[])
             //in shared memory is non zero(it finished)
             //and if the child has never been observed
             //to have finished already.
-            if (*(shm_ptr+(k+2)) != 0 && already_finished_children[k] == 0) {
+            if (*(shm_ptr+(k+3)) != 0 && already_finished_children[k] == 0) {
+                fprintf(fp, "Child %d finished @ time: s: %d ns: %d\n", k, *(shm_ptr+1), *(shm_ptr+2));
                 //Note it as finished.
                 already_finished_children[k] = 1;
                 //Create room for another child to exist.
@@ -303,7 +308,7 @@ int main(int argc, char *argv[])
             }
             
             if (k == (child_proc_alltime_max-1)) {
-                printf("All children finished\n");
+                //fprintf(fp, "\nAll children finished\n");
                 all_children_finished = 1;
             }
         }
@@ -316,20 +321,33 @@ int main(int argc, char *argv[])
     }           
 
     //Start to terminate children.
-    int j;
-    for (j = 0; j < child_proc_alltime_max; j++) {
-        if (pids[j] > 0) {
-            kill(pids[j], SIGUSR1);
-        }
-    }
+    //The first slot in shared memory is 
+    //the flag that tells children
+    //to terminate. Terminate if 1.
+    *shm_ptr = 1;
    
     //Wait on the children. 
     while(wait(NULL) > 0);
 
-    //Print their values to confirm.
-    printf("%s: Seconds are: %d\n", calling_name, *shm_ptr);
-    printf("%s: Milli are: %d\n", calling_name, *(shm_ptr+1));
+    fprintf(fp, "\nFinal Time: s: %d ns: %d\nResults:\n", *(shm_ptr+1), *(shm_ptr+2));
+    
+    //Print the successful ones to file first.
+    for (i = 0; i < (child_proc_alltime_max); i++) {
+        if (*(shm_ptr+3+i) != -1 && *(shm_ptr+3+i) != 0) {
+            fprintf(fp, "Child %d: %d\n", i, *(shm_ptr+3+i));
+        }
+    }
 
+    //Now print unsuccessful.
+    fprintf(fp, "\nDid not finish:\n");
+    for (i = 0; i < (child_proc_alltime_max); i++) {
+        if (*(shm_ptr+3+i) == -1 || *(shm_ptr+3+i) == 0) {
+            fprintf(fp, "Child %d: %d\n", i, *(shm_ptr+3+i));
+        }
+    }
+
+    //Close file
+    fclose(fp);
 
     //Detach and remove shared memory segment.
     shmdt(shm_ptr);
@@ -340,5 +358,14 @@ int main(int argc, char *argv[])
 
 void help()
 {
-    printf("help\n");
+    printf("Usage: %s [OPTIONS]\n", calling_name);
+    printf("\nOPTIONS are as follows:\n");
+    printf("-h\tDisplays this message and exits\n");
+    printf("-n N\tIndicate max total children, N, to ever create\n");
+    printf("-s S\tIndicate max children, S, in system at one time\n");
+    printf("-b B\tStart of sequence, B, of nums to test for primality\n");
+    printf("-i I\tIncrement the sequence by I\n");
+    printf("-o [filename]\tOutput file name\n");
+    printf("Defaults: N=4 S=2 B=43 I=1 filename=output.txt\n");
+    printf("N and S may not be greater than 20.\n");
 }

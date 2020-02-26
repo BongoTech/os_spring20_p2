@@ -1,7 +1,7 @@
 //*******************************************************************
 //Author: Cory Mckiel
 //Date Created: Feb 20, 2020
-//Last Modified: Feb 23, 2020
+//Last Modified: Feb 26, 2020
 //Program Name: prime
 //Associated Files: prime.c oss.c
 //Compiler: gcc
@@ -28,35 +28,8 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-//Declare this as volatile so the compiler
-//knows that it can be asynchronously changed.
-//Declare as atomic so that nothing tries
-//to change at the same time.
-static volatile sig_atomic_t kill_flag = 0;
-
 //Store the name the program was called with.
 char calling_name[200];
-
-//Kill signal handler. Sets kill signal.
-//kill_flag will be checked during
-//program running to see if we should
-//terminate gracefully.
-static void handler(int sig)
-{
-    kill_flag = 1;   
-}
-
-//Set up the interrupt to catch SIGUSR1
-//which doesn't have any default action.
-//Allows me to end the program on my terms.
-//Returns -1 on error.
-static int setupinterrupt()
-{
-    struct sigaction act;
-    act.sa_handler = handler;
-    act.sa_flags = 0;
-    return (sigemptyset(&act.sa_mask) || sigaction(SIGUSR1, &act, NULL));
-}
 
 int main(int argc, char *argv[])
 {
@@ -64,14 +37,9 @@ int main(int argc, char *argv[])
     //variable to use for error reporting.
     strncpy(calling_name, argv[0], 200);
 
-    //Set up the interrupt so the parent
-    //can kill this process gracefully upon
-    //termination.
-    if (setupinterrupt() == -1) {
-        fprintf(stderr, "%s: Error: Failed to set up interrupt.\n%s\n", calling_name, strerror(errno));
-        exit(-1);
-    }
-    
+    //Block ctrl-c  
+    signal(SIGINT, SIG_IGN);
+
     //Check to make the the correct number
     //of arguments is satisfied.
     if (argc != 4) {
@@ -83,11 +51,6 @@ int main(int argc, char *argv[])
     int logical_child_id = atoi(argv[1]);
     int potential_prime = atoi(argv[2]);
     int size_of_shm = atoi(argv[3]);
-
-    //Print them to stdout to confirm reciept.
-    fprintf(stderr, "%s: logical ID: %d\n", calling_name, logical_child_id);
-    //printf("%s: potential prime: %d\n", calling_name, potential_prime);
-    //printf("%s: size of shm: %d\n", calling_name, size_of_shm);
 
     //Declare the shared mem variables.
     key_t key;
@@ -110,26 +73,84 @@ int main(int argc, char *argv[])
         exit(-1);
     }
 
-    //Print out the shared memory.
-    //printf("%s: Seconds: %d\n", calling_name, *shm_ptr);
-    //printf("%s: %d: Milliseconds: %d\n", calling_name, logical_child_id, *(shm_ptr+1));
+    int sieve_size = potential_prime+1;
+    int sieve[sieve_size];
+    int i, j;
 
-    //Do some fake work.
-    int i = 0;
-    while(i < 1000) {
-        i += 1;
+	//Fill the prime sieve.
+	for (i = 0; i < sieve_size; i++) {
+        if (*shm_ptr) {
+            break;
+        }
+		sieve[i] = i;
+	}
+
+    //Start counting simulated milliseconds.
+    int starttime = *(shm_ptr+2);
+    int times_up = 0;
+
+	//In all honesty, I got this algorithm from codesdope.com.
+	//I understand the algorithm and the comments are my own.
+	i = 2;
+	//Loop through each element in sieve and remove all 
+	//multiples of prime numbers. By the time i*i > arraySize
+	//all non primes have been removed.
+	while ((i*i) <= sieve_size) {
+        //Check that the calculation hasn't taken
+        //more than 1 ms simulated time.
+        if (*(shm_ptr+2) - starttime > 1000000) {
+            times_up = 1;
+            break;
+        }
+        //Uncomment to test killing computation.
+        //sleep(1);
+        if (*shm_ptr) {
+            //Parent sent kill signal
+            break;
+        }
+        //check for even numbers besides 2.
+        if (potential_prime != 2 && (potential_prime % 2) == 0) {
+            sieve[potential_prime] = 0;
+            break;
+        }
+        
+      	//If sieve[i] == 0, then the value is not prime.
+		if (sieve[i] != 0) {
+			//Loop through sieve and erase multiples
+			//of sieve[i], which at this point is prime.
+			for (j = 2; j < sieve_size; j++) {
+                if (*shm_ptr) {
+                    break;
+                }
+				//First ensure we're in bounds.
+				if (sieve[i]*j > sieve_size) {
+					break;
+				} else {
+					//Then set each multiple
+					//of sieve[i] to 0.
+					sieve[sieve[i]*j] = 0;
+				}
+			}
+		}
+		i++;
+	}
+
+    //Now the sieve contains only prime numbers and
+    //zeros up to potential_prime. Look in the last index
+    //to see if potential_prime is still there or if it is 
+    //a zero. If kill flag, didn't finish, store -1.
+    if (*shm_ptr == 1 || times_up) {
+        *(shm_ptr+3+logical_child_id) = -1;
+    }
+    else if (sieve[potential_prime] == 0) {
+        *(shm_ptr+3+logical_child_id) = potential_prime - (2*potential_prime);
+    }
+    else {
+        *(shm_ptr+3+logical_child_id) = potential_prime;
     }
     
-    //Store the potential_prime in shared memory
-    //for testing purposes to let oss/master
-    //know the process finished.
-    *(shm_ptr+(2+logical_child_id)) = potential_prime;   
-   
     //Detach and remove shm
     shmdt(shm_ptr);
-    //Not sure if the child should remove the shared memory
-    //or let the parent do it.
-    //shmctl(shm_id, IPC_RMID, NULL);
-      
+     
     return 0;
 }
